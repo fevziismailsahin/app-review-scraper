@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "app-store-scraper": "^0.18.0",
+    "axios": "^1.10.0",
+    "google-play-scraper": "^10.0.1",
+    "puppeteer": "^24.11.1"
+  }
+}
