@@ -1,15 +1,15 @@
-name: Auto Scrape App Store
+name: App Store Scraper
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * *'
-
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup Node.js
@@ -20,5 +20,5 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run scraper
+      - name: Run App Store Scraper
         run: node scripts/appstore_scraper.js
