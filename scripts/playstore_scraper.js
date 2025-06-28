@@ -1,68 +1,92 @@
-const store = require('app-store-scraper');
+// Kütüphaneyi tekrar tek bir nesne olarak import ediyoruz.
+const gplay = require('google-play-scraper');
 const fs = require('fs');
 
-const FILE_PATH = 'data/calm_appstore_reviews.json';
+// --- Ayarlar ---
+const APP_ID = 'com.calm.android';
+const LANGUAGE = 'en';
+const REVIEWS_PER_PAGE = 150;
+const MAX_PAGES = 50;
+const FILE_PATH = 'data/calm_playstore_reviews_en.json';
+// --- Bitiş Ayarlar ---
 
-// Önceki yorumları oku
-let savedReviews = [];
+let allReviews = [];
 const uniqueReviewIds = new Set();
 
-if (fs.existsSync(FILE_PATH)) {
-  const data = fs.readFileSync(FILE_PATH);
-  savedReviews = JSON.parse(data);
-  savedReviews.forEach(review => uniqueReviewIds.add(review.id));
+try {
+  if (fs.existsSync(FILE_PATH)) {
+    const existingData = fs.readFileSync(FILE_PATH, 'utf-8');
+    allReviews = JSON.parse(existingData);
+    allReviews.forEach(review => uniqueReviewIds.add(review.id));
+    console.log(`✅ Mevcut dosyadan ${allReviews.length} yorum yüklendi.`);
+  }
+} catch (e) {
+  console.warn(`⚠️ Mevcut yorum dosyası okunamadı veya bozuk: ${e.message}. Sıfırdan başlanıyor.`);
+  allReviews = [];
 }
 
-const SORT_TYPES = [store.sort.RECENT, store.sort.HELPFUL, store.sort.RELEVANT];
-const COUNTRY_CODES = ['us', 'gb', 'ca', 'au']; // İngilizce konuşulan ülkeler
-const LANG_CODES = ['en'];
+async function fetchAllReviews() {
+  let paginationToken = undefined;
 
-async function fetchBatch(sortType, country, lang) {
-  console.log(`\n🌍 Fetching: sort=${sortType}, country=${country}, lang=${lang}`);
+  // --- KONTROL ---
+  // Eğer 'gplay.reviews' bir fonksiyon değilse, 'gplay.default.reviews' olmalı.
+  // Bu satır, doğru fonksiyonu bulup 'reviewsFunction' değişkenine atar.
+  const reviewsFunction = typeof gplay === 'function' ? gplay : gplay.default?.reviews;
 
-  for (let page = 1; page <= 10; page++) {
+  if (typeof reviewsFunction !== 'function') {
+    console.error("❌ HATA! 'google-play-scraper' kütüphanesinden 'reviews' fonksiyonu bulunamadı.");
+    console.log("Kütüphane yapısı beklenmedik şekilde değişmiş olabilir. Lütfen kütüphane versiyonunu kontrol edin.");
+    // Hatanın ne olduğunu anlamak için kütüphaneden gelen nesneyi yazdıralım:
+    console.log("Gelen 'gplay' nesnesi:", gplay);
+    return; // Fonksiyon bulunamadıysa devam etme.
+  }
+  // --- KONTROL SONU ---
+
+  console.log(`🚀 Yorumları çekme işlemi başlatılıyor... App: ${APP_ID}, Dil: ${LANGUAGE}`);
+
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const currentPage = i + 1;
+    console.log(`\n📄 Sayfa ${currentPage} / ${MAX_PAGES} çekiliyor...`);
+
     try {
-      console.log(`📄 Page ${page}...`);
-      const reviews = await store.reviews({
-        id: '571800810',
-        sort: sortType,
-        page,
-        country,
-        lang
+      // Yorumları çekme isteği - Artık dinamik olarak bulduğumuz doğru fonksiyonu kullanıyoruz.
+      const response = await reviewsFunction({
+        appId: APP_ID,
+        lang: LANGUAGE,
+        sort: 2, // 1: En Yardımcı, 2: En Yeni, 3: Puana Göre
+        num: REVIEWS_PER_PAGE,
+        paginate: true,
+        nextPaginationToken: paginationToken,
       });
 
-      if (reviews.length === 0) break;
+      const newReviews = response.data;
+      paginationToken = response.nextPaginationToken;
 
-      let added = 0;
-      for (const review of reviews) {
-        if (!uniqueReviewIds.has(review.id)) {
-          uniqueReviewIds.add(review.id);
-          savedReviews.push(review);
-          added++;
-        }
+      const uniqueNewReviews = newReviews.filter(review => !uniqueReviewIds.has(review.id));
+      uniqueNewReviews.forEach(review => uniqueReviewIds.add(review.id));
+      allReviews.push(...uniqueNewReviews);
+
+      console.log(`👍 Sayfa ${currentPage}: ${uniqueNewReviews.length} yeni yorum eklendi. (Toplam: ${allReviews.length})`);
+
+      if (!paginationToken || newReviews.length === 0) {
+        console.log('🛑 Çekilecek başka yorum kalmadı.');
+        break;
       }
-      console.log(`✅ Page ${page}: ${added} new reviews added`);
 
     } catch (err) {
-      console.warn(`⚠️ Error on page ${page}: ${err.message}`);
+      console.error(`❌ HATA! Sayfa ${currentPage} çekilemedi:`, err);
+      console.log('Bu hata, Google Play Store tarafından yapılan bir değişiklik veya ağ sorunu nedeniyle olabilir.');
       break;
     }
   }
-}
 
-async function fetchAll() {
-  for (const sort of SORT_TYPES) {
-    for (const country of COUNTRY_CODES) {
-      for (const lang of LANG_CODES) {
-        await fetchBatch(sort, country, lang);
-      }
-    }
+  try {
+    fs.mkdirSync('data', { recursive: true });
+    fs.writeFileSync(FILE_PATH, JSON.stringify(allReviews, null, 2));
+    console.log(`\n💾 Başarıyla tamamlandı! Toplam ${allReviews.length} yorum "${FILE_PATH}" dosyasına kaydedildi.`);
+  } catch(e) {
+    console.error(`❌ Dosyaya yazma hatası: ${e.message}`);
   }
-
-  // Kaydet
-  fs.mkdirSync('data', { recursive: true });
-  fs.writeFileSync(FILE_PATH, JSON.stringify(savedReviews, null, 2));
-  console.log(`\n💾 Total unique reviews saved: ${savedReviews.length}`);
 }
 
-fetchAll().catch(console.error);
+fetchAllReviews();
