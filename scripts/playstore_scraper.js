@@ -1,92 +1,106 @@
-// Kütüphaneyi tekrar tek bir nesne olarak import ediyoruz.
-const gplay = require('google-play-scraper');
 const fs = require('fs');
+const gplay = require('google-play-scraper');
 
-// --- Ayarlar ---
-const APP_ID = 'com.calm.android';
-const LANGUAGE = 'en';
-const REVIEWS_PER_PAGE = 150;
-const MAX_PAGES = 50;
-const FILE_PATH = 'data/calm_playstore_reviews_en.json';
-// --- Bitiş Ayarlar ---
+// --- Configuration ---
+const APP_ID = 'com.calm.android'; // The package name (ID) of the Android app
+const LANGUAGE = 'en'; // Language of the reviews to fetch (e.g., 'en' for English)
+const REVIEWS_PER_PAGE = 200; // Number of reviews to fetch per page (max 200 per gplay-scraper)
+const MAX_PAGES = 250; // Maximum number of pages to attempt to fetch (Increased for 50,000+ reviews)
+const FILE_PATH = 'data/calm_playstore_reviews_en.json'; // Path to save the reviews JSON file
+// --- End Configuration ---
 
-let allReviews = [];
-const uniqueReviewIds = new Set();
+let allReviews = []; // Array to store all fetched reviews
+const uniqueReviewIds = new Set(); // Set to keep track of unique review IDs to prevent duplicates
 
+// Attempt to load existing reviews from the file
 try {
   if (fs.existsSync(FILE_PATH)) {
     const existingData = fs.readFileSync(FILE_PATH, 'utf-8');
-    allReviews = JSON.parse(existingData);
+    const parsedReviews = JSON.parse(existingData);
+    allReviews = parsedReviews;
     allReviews.forEach(review => uniqueReviewIds.add(review.id));
-    console.log(`✅ Mevcut dosyadan ${allReviews.length} yorum yüklendi.`);
+    console.log(`✅ Loaded ${allReviews.length} existing reviews from ${FILE_PATH}.`);
   }
-} catch (e) {
-  console.warn(`⚠️ Mevcut yorum dosyası okunamadı veya bozuk: ${e.message}. Sıfırdan başlanıyor.`);
-  allReviews = [];
+} catch (error) {
+  console.warn(`⚠️ Could not read or parse existing review file (${FILE_PATH}): ${error.message}. Starting with an empty review list.`);
+  allReviews = []; // Reset if file is corrupted or unreadable
 }
 
+/**
+ * Main function to fetch all reviews from the Google Play Store.
+ * It iterates through pages and sorting methods, handling pagination tokens.
+ */
 async function fetchAllReviews() {
-  let paginationToken = undefined;
+  let paginationToken = undefined; // Token for fetching the next page of reviews
 
-  // --- KONTROL ---
-  // Eğer 'gplay.reviews' bir fonksiyon değilse, 'gplay.default.reviews' olmalı.
-  // Bu satır, doğru fonksiyonu bulup 'reviewsFunction' değişkenine atar.
-  const reviewsFunction = typeof gplay === 'function' ? gplay : gplay.default?.reviews;
+  // --- Function Validation ---
+  // The 'google-play-scraper' library might export 'reviews' directly or as a default export.
+  // This line dynamically determines the correct function to use.
+  const reviewsFunction = typeof gplay.reviews === 'function' ? gplay.reviews : gplay.default?.reviews;
 
   if (typeof reviewsFunction !== 'function') {
-    console.error("❌ HATA! 'google-play-scraper' kütüphanesinden 'reviews' fonksiyonu bulunamadı.");
-    console.log("Kütüphane yapısı beklenmedik şekilde değişmiş olabilir. Lütfen kütüphane versiyonunu kontrol edin.");
-    // Hatanın ne olduğunu anlamak için kütüphaneden gelen nesneyi yazdıralım:
-    console.log("Gelen 'gplay' nesnesi:", gplay);
-    return; // Fonksiyon bulunamadıysa devam etme.
+    console.error(`❌ ERROR: The 'reviews' function was not found in the 'google-play-scraper' library.`);
+    console.error(`Please check the library version and ensure 'gplay.reviews' or 'gplay.default.reviews' is available.`);
+    console.log(`The 'gplay' object received was:`, gplay);
+    return; // Exit if the required function is not found
   }
-  // --- KONTROL SONU ---
+  // --- End Function Validation ---
 
-  console.log(`🚀 Yorumları çekme işlemi başlatılıyor... App: ${APP_ID}, Dil: ${LANGUAGE}`);
+  console.log(`🚀 Starting review fetching process for App: ${APP_ID}, Language: ${LANGUAGE}`);
 
+  // Loop through the maximum number of pages
   for (let i = 0; i < MAX_PAGES; i++) {
     const currentPage = i + 1;
-    console.log(`\n📄 Sayfa ${currentPage} / ${MAX_PAGES} çekiliyor...`);
+    console.log(`\n📄 Fetching page ${currentPage} / ${MAX_PAGES}...`);
 
     try {
-      // Yorumları çekme isteği - Artık dinamik olarak bulduğumuz doğru fonksiyonu kullanıyoruz.
+      // Make the request to fetch reviews using the dynamically found function
       const response = await reviewsFunction({
         appId: APP_ID,
         lang: LANGUAGE,
-        sort: 2, // 1: En Yardımcı, 2: En Yeni, 3: Puana Göre
-        num: REVIEWS_PER_PAGE,
-        paginate: true,
-        nextPaginationToken: paginationToken,
+        sort: 2, // Sort by newest reviews (gplay.sort.NEWEST is 2). Changed from gplay.sort.NEWEST to direct value 2 to fix TypeError.
+        num: REVIEWS_PER_PAGE, // Number of reviews per page
+        paginate: true, // Enable pagination
+        nextPaginationToken: paginationToken, // Pass the token for subsequent pages
       });
 
-      const newReviews = response.data;
-      paginationToken = response.nextPaginationToken;
+      const newReviews = response.data; // Array of reviews from the current page
+      paginationToken = response.nextPaginationToken; // Get the token for the next page
 
+      // Filter out reviews that have already been collected (based on ID)
       const uniqueNewReviews = newReviews.filter(review => !uniqueReviewIds.has(review.id));
+      // Add new unique review IDs to the set
       uniqueNewReviews.forEach(review => uniqueReviewIds.add(review.id));
+      // Add the unique new reviews to the main collection
       allReviews.push(...uniqueNewReviews);
 
-      console.log(`👍 Sayfa ${currentPage}: ${uniqueNewReviews.length} yeni yorum eklendi. (Toplam: ${allReviews.length})`);
+      console.log(`👍 Page ${currentPage}: Added ${uniqueNewReviews.length} new unique reviews. (Total collected: ${allReviews.length})`);
 
+      // Break the loop if there's no pagination token or no new reviews were returned
       if (!paginationToken || newReviews.length === 0) {
-        console.log('🛑 Çekilecek başka yorum kalmadı.');
+        console.log('🛑 No more reviews to fetch or pagination ended.');
         break;
       }
 
-    } catch (err) {
-      console.error(`❌ HATA! Sayfa ${currentPage} çekilemedi:`, err);
-      console.log('Bu hata, Google Play Store tarafından yapılan bir değişiklik veya ağ sorunu nedeniyle olabilir.');
-      break;
+      // Introduce a delay to avoid hitting rate limits
+      await new Promise(resolve => setTimeout(resolve, 1000)); // 1-second delay
+
+    } catch (error) {
+      console.error(`❌ ERROR: Failed to fetch page ${currentPage}:`, error);
+      console.log('This might be due to a change in Google Play Store API, network issues, or temporary blocking.');
+      break; // Exit the loop on error
     }
   }
 
+  // Save all collected unique reviews to a JSON file
   try {
-    fs.mkdirSync('data', { recursive: true });
-    fs.writeFileSync(FILE_PATH, JSON.stringify(allReviews, null, 2));
-    console.log(`\n💾 Başarıyla tamamlandı! Toplam ${allReviews.length} yorum "${FILE_PATH}" dosyasına kaydedildi.`);
-  } catch(e) {
-    console.error(`❌ Dosyaya yazma hatası: ${e.message}`);
+    fs.mkdirSync('data', { recursive: true }); // Ensure the 'data' directory exists
+    fs.writeFileSync(FILE_PATH, JSON.stringify(allReviews, null, 2)); // Write formatted JSON
+    console.log(`\n💾 Successfully completed! Total ${allReviews.length} reviews saved to "${FILE_PATH}".`);
+  } catch(error) {
+    console.error(`❌ ERROR: Failed to write reviews to file: ${error.message}`);
   }
 }
 
+// Execute the main fetching function
 fetchAllReviews();
